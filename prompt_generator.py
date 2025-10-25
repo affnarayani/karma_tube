@@ -3,7 +3,9 @@ import google.generativeai as genai
 import os
 import re
 import time
+import random # Moved import random to the top
 from dotenv import load_dotenv
+import google.api_core.exceptions
 
 load_dotenv() # Load environment variables from .env
 
@@ -45,9 +47,15 @@ def generate_video_prompt(model, selected_god, transcript_line):
         "Provide only the final prompt, without any introductory sentences like 'Here's the prompt:'."
     )
 
+    selected_god_phrase = ""
+    if random.random() < 0.5:
+        selected_god_phrase = f"'{selected_god}' "
+        print(f"Using selected_god: {selected_god} in the prompt.")
+    else:
+        print("Not using selected_god in the prompt for this iteration.")
     user_request = (
-        f"Generate a video prompt for a scene featuring '{selected_god}' "
-        f"delivering the message: '{transcript_line}'. "
+        f"Generate a video prompt for a scene featuring {selected_god_phrase}"
+        f"conveying the message: '{transcript_line}'. "
         f"Ensure the prompt adheres to the following: mature cartoon style for adults, no text overlays, "
         f"and no Hindi or Unicode characters in the final output. "
         f"Translate the message '{transcript_line}' to English before incorporating it into the prompt."
@@ -55,11 +63,25 @@ def generate_video_prompt(model, selected_god, transcript_line):
 
     full_prompt = f"{prompt_engineer_instruction}\n\n{user_request}"
 
-    response = model.generate_content(full_prompt)
-    # Extracting the text from the response, handling potential candidates
-    if response.candidates:
-        return response.candidates[0].content.parts[0].text
-    return "Error: Could not generate prompt."
+    max_retries = 2  # 2 retries + 1 initial attempt = 3 total attempts
+    retry_delay = 30 # seconds
+
+    for attempt in range(max_retries + 1):
+        try:
+            response = model.generate_content(full_prompt)
+            if response.candidates:
+                return response.candidates[0].content.parts[0].text
+            return "Error: Could not generate prompt."
+        except google.api_core.exceptions.InternalServerError as e:
+            if attempt < max_retries:
+                print(f"InternalServerError encountered. Retrying in {retry_delay} seconds... (Attempt {attempt + 1}/{max_retries + 1})")
+                time.sleep(retry_delay)
+            else:
+                print(f"InternalServerError encountered after {max_retries + 1} attempts. Failing. Error: {e}")
+                return "Error: Internal Server Error after multiple retries."
+        except Exception as e:
+            print(f"An unexpected error occurred: {e}")
+            return "Error: An unexpected error occurred."
 
 def main():
     selected_god = read_config()
