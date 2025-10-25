@@ -76,6 +76,10 @@ def main():
     output_file = "prompts.json"
     generated_prompts = []
 
+    # Clear prompts.json at the beginning of execution
+    with open(output_file, 'w', encoding='utf-8') as f:
+        json.dump([], f) # Write an empty JSON array to clear the file
+
     # Load existing prompts if the file exists, otherwise start with an empty list
     if os.path.exists(output_file):
         with open(output_file, 'r', encoding='utf-8') as f:
@@ -86,7 +90,7 @@ def main():
 
     for i, line in enumerate(transcript_lines):
         print(f"Generating prompt for line {i+1}: '{line}'")
-        prompt_text = generate_video_prompt(model, selected_god, line)
+        prompt_text = "Generate a video: " + generate_video_prompt(model, selected_god, line)
         
         # Append the new prompt to the list
         generated_prompts.append({f"prompt_{len(generated_prompts) + 1}": prompt_text})
