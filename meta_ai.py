@@ -59,15 +59,30 @@ def generate_video():
 
     os.makedirs(videos_dir, exist_ok=True) # Ensure the videos directory exists
 
+    error_xpath = "/html/body/div[1]/div/div/div/div[2]/div[1]/div/div/div/div/div[1]/div[1]/div/div[2]/div[1]/div/div/div/div/div[2]/div/div[1]/div[1]/div[1]/div/div[2]/div/div[2]/div/div/div/div"
+    
     for prompt_entry in prompts_data:
         for prompt_key, prompt_text in prompt_entry.items():
             print(f"\n--- Processing {prompt_key}: '{prompt_text[:50]}...' ---")
 
-            print(f"Attempting to log in to {target_url} with headless mode set to {HEADLESS}...")
-            driver = login_with_cookies(target_url, cookies_filename, headless=HEADLESS, window_size="1920,1080")
+            max_retries_per_prompt = 2 # 1 main attempt + 2 retries
+            current_retry = 0
+            
+            while current_retry <= max_retries_per_prompt:
+                driver = None # Initialize driver for each retry attempt
+                file_to_rename_after_browser_close = None # Initialize variable for each retry
 
-            if driver:
                 try:
+                    print(f"Attempt {current_retry + 1}/{max_retries_per_prompt + 1}: Logging in to {target_url} with headless mode set to {HEADLESS}...")
+                    driver = login_with_cookies(target_url, cookies_filename, headless=HEADLESS, window_size="1920,1080")
+
+                    if not driver:
+                        print("Failed to get a driver instance. Login might have failed. Retrying...")
+                        current_retry += 1
+                        if current_retry > max_retries_per_prompt:
+                            raise Exception(f"Failed to log in after {max_retries_per_prompt + 1} attempts for prompt '{prompt_key}'. Failing program.")
+                        continue # Continue to the next retry attempt
+
                     print("Login successful. Proceeding to generate video.")
                     
                     print("Attempting to find the prompt input field.")
@@ -123,7 +138,7 @@ def generate_video():
                     fourth_video_xpath = "/html/body/div[1]/div/div/div/div[2]/div[1]/div/div/div/div/div[1]/div[1]/div/div[2]/div[1]/div/div/div/div/div[2]/div/div[1]/div[1]/div[1]/div/div[2]/div/div[2]/div/div/div/div[4]/div/div[1]/div[1]/div/div/div/div/div/div/div[1]/div/div/div/div/div/div"
                     
                     download_button_xpath = "/html/body/div[1]/div/div/div/div[2]/div[3]/div/div/div[2]/div/div/div[2]/div[1]/div/div/div/div/div/div/div[2]/div[2]/div[2]/div/div[1]/div[2]/div[1]/div"
-                    close_button_xpath = "/html/body/div[1]/div/div/div/div[2]/div[3]/div/div/div[2]/div/div/div[2]/div[1]/div/div/div/div/div/div/div[2]/div[1]/div[1]/div"
+                    close_button_xpath = "/html/body/div[1]/div/div/div/div[2]/div[3]/div/div/div[2]/div[1]/div[1]/div"
 
                     all_video_xpaths = [
                         ("first video", first_video_xpath),
@@ -143,11 +158,28 @@ def generate_video():
                         except Exception as e:
                             print(f"An error occurred while trying to find {video_name}: {e}. Skipping.")
 
-                    retries = 0
-                    max_retries = 2
-                    while not found_videos and retries < max_retries:
-                        retries += 1
-                        print(f"No videos found. Refreshing page (Retry {retries}/{max_retries}).")
+                    # Check for error message if no videos are found
+                    if not found_videos:
+                        try:
+                            error_element = wait.until(EC.presence_of_element_located((By.XPATH, error_xpath)))
+                            error_text = error_element.text
+                            if "Oops! Something went wrong!" in error_text:
+                                print(f"Error detected at XPath: {error_xpath} with text: '{error_text}'. Retrying...")
+                                current_retry += 1
+                                if current_retry > max_retries_per_prompt:
+                                    raise Exception(f"Video generation failed after {max_retries_per_prompt + 1} attempts for prompt '{prompt_key}'. Failing program.")
+                                continue # Retry the current prompt
+                        except TimeoutException:
+                            print("No videos found and no specific error message detected. Proceeding with existing retry logic for video elements.")
+                        except Exception as e:
+                            print(f"An unexpected error occurred while checking for error XPath: {e}. Proceeding with existing retry logic for video elements.")
+
+                    # Existing retry logic for finding videos (if no specific error was detected)
+                    retries_video_find = 0
+                    max_retries_video_find = 2 # This is separate from the prompt-level retries
+                    while not found_videos and retries_video_find < max_retries_video_find:
+                        retries_video_find += 1
+                        print(f"No videos found. Refreshing page (Video find retry {retries_video_find}/{max_retries_video_find}).")
                         driver.refresh()
                         time.sleep(15) # Wait after refresh
                         
@@ -162,12 +194,10 @@ def generate_video():
                                 print(f"An error occurred while trying to find {video_name}: {e}. Skipping.")
 
                     if not found_videos:
-                        raise Exception("No videos found to download after multiple retries. Failing the program as per requirement.")
+                        raise Exception("No videos found to download after multiple retries (including video find retries). Failing the program as per requirement.")
 
                     selected_video_name, selected_video_xpath = random.choice(found_videos)
                     print(f"Randomly selected {selected_video_name} for download.")
-
-                    file_to_rename_after_browser_close = None # Initialize variable to store file info for later renaming
 
                     try:
                         video_element = wait.until(EC.element_to_be_clickable((By.XPATH, selected_video_xpath)))
@@ -189,7 +219,11 @@ def generate_video():
                         
                         if not downloaded_files:
                             print("Error: No files found in the downloads directory to move.")
-                            continue # Skip to the next prompt if no files are found
+                            # This is a critical error for the current prompt, so we should retry if possible
+                            current_retry += 1
+                            if current_retry > max_retries_per_prompt:
+                                raise Exception(f"No files downloaded after {max_retries_per_prompt + 1} attempts for prompt '{prompt_key}'. Failing program.")
+                            continue # Retry the current prompt
 
                         latest_file_in_downloads = max(downloaded_files, key=os.path.getctime)
                         original_filename = os.path.basename(latest_file_in_downloads)
@@ -214,14 +248,28 @@ def generate_video():
                             print(f"Warning: An error occurred while trying to click the close button for {selected_video_name}: {e}. Proceeding without closing modal.")
 
                     except TimeoutException:
-                        print(f"Timeout: Could not find or click elements for {selected_video_name}. Download failed.")
-                        # Do not re-raise here, allow the script to continue to the next prompt
+                        print(f"Timeout: Could not find or click elements for {selected_video_name}. Download failed. Retrying...")
+                        current_retry += 1
+                        if current_retry > max_retries_per_prompt:
+                            raise Exception(f"Video download failed after {max_retries_per_prompt + 1} attempts for prompt '{prompt_key}'. Failing program.")
+                        continue # Retry the current prompt
                     except Exception as e:
-                        print(f"An error occurred while processing {selected_video_name}: {e}. Download failed.")
-                        # Do not re-raise here, allow the script to continue to the next prompt
+                        print(f"An error occurred while processing {selected_video_name}: {e}. Download failed. Retrying...")
+                        current_retry += 1
+                        if current_retry > max_retries_per_prompt:
+                            raise Exception(f"Video processing failed after {max_retries_per_prompt + 1} attempts for prompt '{prompt_key}'. Failing program.")
+                        continue # Retry the current prompt
 
                     print("Finished processing the selected video. Waiting for 10 seconds before closing the browser.")
                     time.sleep(10)
+                    break # Break out of the retry loop if successful
+
+                except Exception as e:
+                    print(f"An unexpected error occurred during video generation for prompt '{prompt_key}': {e}. Retrying...")
+                    current_retry += 1
+                    if current_retry > max_retries_per_prompt:
+                        raise Exception(f"Video generation failed after {max_retries_per_prompt + 1} attempts for prompt '{prompt_key}'. Failing program.")
+                    # If an exception occurs, the finally block will close the driver, and the loop will continue for a retry.
                 finally:
                     if driver:
                         driver.quit()
@@ -240,7 +288,7 @@ def generate_video():
                         except Exception as e:
                             print(f"Error renaming file '{original_path_in_videos}' to '{final_video_name}': {e}")
             else:
-                print("Failed to get a driver instance. Login might have failed. Exiting video generation for this prompt.")
+                print(f"All {max_retries_per_prompt + 1} attempts failed for prompt '{prompt_key}'. Moving to the next prompt.")
 
 if __name__ == "__main__":
     generate_video()
