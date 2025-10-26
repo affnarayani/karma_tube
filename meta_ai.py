@@ -1,9 +1,10 @@
+import sys # Import sys for exiting the program
 import time
 import os
 import re
-import json # Import the json module
-import shutil # Import the shutil module
-import random # Import the random module
+import json
+import shutil
+import random
 from datetime import datetime, timedelta
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
@@ -44,6 +45,10 @@ def generate_video():
     cookies_filename = "cookies.json.encypted"
     prompts_filename = "prompts.json"
     videos_dir = "videos"
+    
+    # XPath for login verification
+    login_verification_xpath = "/html/body/div[1]/div/div/div/div[2]/div[1]/div/div/div/div/div[1]/div[1]/div/div[1]/div/div/div[3]/div/div[1]/span/span"
+    expected_username = "kumar.ujjawal247"
 
     # Load prompts from prompts.json
     try:
@@ -83,7 +88,31 @@ def generate_video():
                             raise Exception(f"Failed to log in after {max_retries_per_prompt + 1} attempts for prompt '{prompt_key}'. Failing program.")
                         continue # Continue to the next retry attempt
 
-                    print("Login successful. Proceeding to generate video.")
+                    # --- Login Verification Logic ---
+                    print("Waiting for page to load completely after applying cookies...")
+                    wait = WebDriverWait(driver, 30) # Increased wait time for initial page load
+
+                    try:
+                        # Wait for the specific XPath to be present and check its text
+                        username_element = wait.until(EC.presence_of_element_located((By.XPATH, login_verification_xpath)))
+                        if expected_username in username_element.text:
+                            print(f"Login successful. Verified username: '{username_element.text}'. Proceeding to generate video.")
+                        else:
+                            print(f"Login verification failed. Expected '{expected_username}' but found '{username_element.text}'.")
+                            print("Cookie has expired, please renew the cookie.")
+                            driver.quit()
+                            sys.exit(1) # Exit the program
+                    except TimeoutException:
+                        print("Login verification failed: Timeout while waiting for username element.")
+                        print("Cookie has expired, please renew the cookie.")
+                        driver.quit()
+                        sys.exit(1) # Exit the program
+                    except Exception as e:
+                        print(f"An error occurred during login verification: {e}")
+                        print("Cookie has expired, please renew the cookie.")
+                        driver.quit()
+                        sys.exit(1) # Exit the program
+                    # --- End Login Verification Logic ---
                     
                     print("Attempting to find the prompt input field.")
                     prompt_selectors = [
@@ -97,7 +126,8 @@ def generate_video():
                     ]
                     
                     prompt_field = None
-                    wait = WebDriverWait(driver, 20)
+                    # Re-using the wait object from login verification, or creating a new one if needed
+                    # wait = WebDriverWait(driver, 20) # This line is now redundant if wait is already defined above
 
                     for by_type, selector in prompt_selectors:
                         try:
@@ -138,7 +168,7 @@ def generate_video():
                     fourth_video_xpath = "/html/body/div[1]/div/div/div/div[2]/div[1]/div/div/div/div/div[1]/div[1]/div/div[2]/div[1]/div/div/div/div/div[2]/div/div[1]/div[1]/div[1]/div/div[2]/div/div[2]/div/div/div/div[4]/div/div[1]/div[1]/div/div/div/div/div/div/div[1]/div/div/div/div/div/div"
                     
                     download_button_xpath = "/html/body/div[1]/div/div/div/div[2]/div[3]/div/div/div[2]/div/div/div[2]/div[1]/div/div/div/div/div/div/div[2]/div[2]/div[2]/div/div[1]/div[2]/div[1]/div"
-                    close_button_xpath = "/html/body/div[1]/div/div/div/div[2]/div[3]/div/div/div[2]/div[1]/div[1]/div"
+                    close_button_xpath = "/html/body/div[1]/div/div/div/div[2]/div[3]/div/div/div[2]/div/div/div[2]/div[1]/div/div/div/div/div/div/div[2]/div[1]/div[1]/div"
 
                     all_video_xpaths = [
                         ("first video", first_video_xpath),
